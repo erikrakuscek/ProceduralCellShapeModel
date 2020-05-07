@@ -10,7 +10,7 @@ parameters while retaining the randomness of shape through model seed parameter.
 ## References:
 [1] Membrane (CAAX). url: https://www.allencell.org/data-downloading.html
 
-[2] A. Kessel, “The Living Cell Gallery”. url: https://amit1b.wordpress.com/the-molecules-of-life/10-theliving-cell-gallery/
+[2] A. Kessel, “The Living Cell Gallery”. url: https://amit1b.wordpress.com/the-molecules-of-life/10-the-living-cell-gallery/
 
 [3] T. Vrtovec, D. Tomaževič, B. Likar, L. Travnik, F. Pernuš, “Automated Construction Of 3D Statistical
 Shape Models”, Image Analysis & Stereology, 2004.
