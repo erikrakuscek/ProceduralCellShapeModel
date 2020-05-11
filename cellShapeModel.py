@@ -3,6 +3,14 @@ import cv2
 import czifile
 import pickle
 
+
+def num_red_pixels(image):
+    return image[(image == [255, 0, 0])]
+
+
+# [seedX, seedY, layerFrom, layerTo, maxSize]
+cells = [[1120, 600, 19, 53, 40000]]
+
 # image = czifile.imread('CAAX_100X_20171024_1-Scene-03-P3-B02.czi')
 
 # with open('cells.pickle', 'wb+') as f:
@@ -31,32 +39,51 @@ with open('cells.pickle', 'rb+') as f:
 
 # TODO: init random seed
 # TODO: init vektor landmarkov
+landmarks = []
 
-for i in range(25, 40):
-    image = images[i]
-    image = cv2.normalize(image, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
-    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+for cell in cells:
+    seedX = cell[0]
+    seedY = cell[1]
+    layerFrom = cell[2]
+    layerTo = cell[3]
+    max_red = cell[4]
+    for i in range(layerFrom, layerTo - 20):
+        image = images[i]
+        image = cv2.normalize(image, dst=None, alpha=0, beta=65535, norm_type=cv2.NORM_MINMAX)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
-    image = cv2.convertScaleAbs(image, alpha=(255.0 / 65535.0))
+        image = cv2.convertScaleAbs(image, alpha=(255.0 / 65535.0))
 
-    seed = (500, 500)
+        seed = (seedX, seedY)
+        cv2.floodFill(image, None, seedPoint=seed, newVal=(0, 0, 255), loDiff=(3, 3, 3, 3), upDiff=(255, 255, 255, 255))
+        cv2.circle(image, seed, 2, (0, 255, 0), cv2.FILLED, cv2.LINE_AA)
 
-    cv2.floodFill(image, None, seedPoint=seed, newVal=(0, 0, 255), loDiff=(5, 5, 5, 5), upDiff=(3, 3, 3, 3))
-    cv2.circle(image, seed, 2, (0, 255, 0), cv2.FILLED, cv2.LINE_AA)
+        # kernel = np.ones((5, 5), np.float32) / 25
+        # image = cv2.filter2D(image, -1, kernel)
 
-    # kernel = np.ones((5, 5), np.float32) / 25
-    # image = cv2.filter2D(image, -1, kernel)
+        reds = num_red_pixels(image)
+        print(i, reds.size)
 
-    kernel = np.ones((5, 5), np.uint8)
-    image = cv2.dilate(image, kernel, iterations=3)
+        # Glajenje slike
+        kernel = np.ones((5, 5), np.uint8)
+        image = cv2.dilate(image, kernel, iterations=3)
 
-    cv2.imshow('flood' + str(i), image)
+        if reds.size < max_red:
+            bg = image[:, :, 0] == image[:, :, 1]  # B == G
+            gr = image[:, :, 1] == image[:, :, 2]  # G == R
+            image = np.bitwise_and(bg, gr, dtype=np.uint8) * 255
 
-    # TODO: določimo landmarke
+            image = cv2.Canny(image, 5, 200)
 
-    # TODO: poravnaj landmarke v (0, 0)
+            a = np.argwhere(image == 255)
 
-    # TODO: dodaj landmarke v vekor landmarkov
+            cv2.imshow('layer ' + str(i), image)
+
+        # TODO: določimo landmarke
+
+        # TODO: poravnaj landmarke v (0, 0)
+
+        # TODO: dodaj landmarke v vekor landmarkov
 
 # TODO: izračunaj povprečno obliko celice
 

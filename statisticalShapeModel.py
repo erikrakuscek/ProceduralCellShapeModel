@@ -1,5 +1,4 @@
 import quilt3
-
 import json
 
 # Fetching cell data #
