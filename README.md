@@ -1,5 +1,7 @@
 # ProceduralCellShapeModel
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## Description
 The goal of this seminar is to create a procedural model of call membrane shape extracted from real-life cell data.
 The cell data can be obtained from Allan Cell institute database [1], where thousands of cells are labeled and
