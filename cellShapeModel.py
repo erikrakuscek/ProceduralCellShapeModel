@@ -7,15 +7,50 @@ import random
 import math
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from scipy.interpolate import Rbf
+from shapely.geometry import Point
+from shapely.geometry.polygon import Polygon
+from scipy.spatial import ConvexHull, convex_hull_plot_2d
 
 
 def num_red_pixels(img):
     return img[(img == [255, 0, 0])]
 
 
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+def clockwiseangle_and_distance(point):
+    refvec = [0, 1]
+    origin = [0, 0]
+
+    # Vector between point and the origin: v = p - o
+    vector = [point[0] - origin[0], point[1] - origin[1]]
+    # Length of vector: ||v||
+    lenvector = math.hypot(vector[0], vector[1])
+    # If length is zero there is no angle
+    if lenvector == 0:
+        return -math.pi, 0
+    # Normalize vector: v/||v||
+    normalized = [vector[0] / lenvector, vector[1] / lenvector]
+    dotprod = normalized[0] * refvec[0] + normalized[1] * refvec[1]  # x1*x2 + y1*y2
+    diffprod = refvec[1] * normalized[0] - refvec[0] * normalized[1]  # x1*y2 - y1*x2
+    angle = math.atan2(diffprod, dotprod)
+    # Negative angles represent counter-clockwise angles so we need to subtract them
+    # from 2*pi (360 degrees)
+    if angle < 0:
+        return 2 * math.pi + angle, lenvector
+    # I return first the angle because that's the primary sorting criterium
+    # but if two vectors have the same angle then the shorter distance should come first.
+    return angle, lenvector
+
+
 LANDMARKS_PER_LAYER = 15
-LAYER_HEIGHT = 5
+LAYER_HEIGHT = 1
+NUM_LAYERS = 34
+
 # [seedX, seedY, layerFrom, layerTo, minSize, maxSize]
 cells = [[1120, 600, 19, 53, LANDMARKS_PER_LAYER, 40000],
          [340, 670, 19, 53, LANDMARKS_PER_LAYER, 40000],
@@ -23,36 +58,16 @@ cells = [[1120, 600, 19, 53, LANDMARKS_PER_LAYER, 40000],
          [1010, 610, 19, 53, LANDMARKS_PER_LAYER, 35000],
          [540, 515, 17, 51, LANDMARKS_PER_LAYER, 40000],
          [1400, 1180, 19, 53, LANDMARKS_PER_LAYER, 40000]]
-# cells = [[540, 515, 17, 51, LANDMARKS_PER_LAYER, 40000]]
 
 # image = czifile.imread('CAAX_100X_20171024_1-Scene-03-P3-B02.czi')
 
 # with open('cells.pickle', 'wb+') as f:
 #    pickle.dump(image[0][0][3], f)
 
-
-if None:
+if True:
 
     with open('cells.pickle', 'rb+') as f:
         images = pickle.load(f)
-
-    # image = cv2.bitwise_not(image)
-
-    # image = cv2.equalizeHist(image)
-
-    # image = cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
-
-    # Create kernel
-    # kernel = np.array([[0, -1, 0],
-    #                   [-1, 5, -1],
-    #                   [0, -1, 0]])
-
-    # Sharpen image
-    # image = cv2.filter2D(image, -1, kernel)
-
-    # cv2.imshow('fastNlMeansDenoisingColored', image)
-
-    # image = cv2.Canny(image, 5, 200)
 
     # TODO: init random seed
     cells_landmarks = []
@@ -76,7 +91,8 @@ if None:
             image = cv2.convertScaleAbs(image, alpha=(255.0 / 65535.0))
 
             seed = (cell[0], cell[1])
-            cv2.floodFill(image, None, seedPoint=seed, newVal=(0, 0, 255), loDiff=(3, 3, 3, 3), upDiff=(255, 255, 255, 255))
+            cv2.floodFill(image, None, seedPoint=seed, newVal=(0, 0, 255), loDiff=(3, 3, 3, 3),
+                          upDiff=(255, 255, 255, 255))
 
             reds = num_red_pixels(image)
             cv2.imwrite('newImages/' + str(i) + '.png', image)
@@ -112,18 +128,19 @@ if None:
             # vzamemo naključnih LANDMARKS_PER_LAYER točk na robu, jih poravnamo v središče koordinatnega sistema
             # in jih dodamo v landmarks
             i_landmarks = np.random.choice(np.arange(edge.shape[0]), LANDMARKS_PER_LAYER, replace=False)
-            i_landmarks.sort()
-            a = 0
+
+            cell_landmarks = []
             for j in i_landmarks:
-                landmarks.append(edge[j][1] - seed[0])
-                landmarks.append(edge[j][0] - seed[1])
-                landmarks.append(z)
+                cell_landmarks.append(edge[j][1] - seed[0])
+                cell_landmarks.append(edge[j][0] - seed[1])
+                cell_landmarks.append(z)
 
-                cv2.circle(image, (int(edge[j][1]), int(edge[j][0])), 4, (2 * a, 0, 0), cv2.FILLED, cv2.LINE_AA)
-                a += 1
+            cell_landmarks = np.asarray(list(chunks(cell_landmarks, 3)))
+            cell_landmarks = sorted(cell_landmarks, key=clockwiseangle_and_distance)
+            cell_landmarks = np.asarray(cell_landmarks).flatten().tolist()
 
-            # cv2.imshow('layer ' + str(i), image)
-
+            for a in range(LAYER_HEIGHT):
+                landmarks += cell_landmarks
             prev_image = image
             prev_edge = edge
             z += LAYER_HEIGHT
@@ -152,7 +169,6 @@ if None:
     for i in range(cells_landmarks.shape[1]):
         eigen_matrix[i] = eigenvectors[:, i]
 
-
     with open('eigenvalues.pickle', 'wb+') as f:
         pickle.dump(eigenvalues, f)
     with open('eigenvectors.pickle', 'wb+') as f:
@@ -167,69 +183,89 @@ with open('eigenvectors.pickle', 'rb+') as f:
 with open('avg.pickle', 'rb+') as f:
     avg = pickle.load(f)
 
-
-
 # TODO: generate new cells WOOHOO!
 # weights = np.ones(cells_landmarks.shape[1])
 # for i in range(weights.size):
 #     weights[i] *= np.sign(eigenvalues[0]) * random.random() * 3 * math.sqrt(abs(eigenvalues[0].real))
 
-x_kaca = avg + (random.random() * 2 * math.sqrt(abs(eigenvalues[0])) * eigenvectors[0])
-x_kaca2 = avg + (random.random() * 2 * math.sqrt(abs(eigenvalues[0])) * eigenvectors[0])
+random.seed(123123)
+new_cell = avg + (random.random() * 2 * math.sqrt(abs(eigenvalues[0])) * eigenvectors[0])
 
-fig = plt.figure()
-ax = Axes3D(fig)
-ax.set_xlim(-300, 300)
-ax.set_ylim(-300, 300)
-ax.set_zlim(-300, 300)
+# fig = plt.figure()
+# ax = Axes3D(fig)
+# ax.set_xlim(-300, 300)
+# ax.set_ylim(-300, 300)
+# ax.set_zlim(-300, 300)
+#
+new_cell_x = new_cell[0::3]
+new_cell_y = new_cell[1::3]
+new_cell_z = new_cell[2::3]
+# ax.scatter(new_cell_x, new_cell_y, new_cell_z, c='r', s=1)
+# plt.show()
 
-new_cell_x = x_kaca2[0::3]
-new_cell_y = x_kaca2[1::3]
-new_cell_z = x_kaca2[2::3]
-ax.scatter(new_cell_x, new_cell_y, new_cell_z, c='b', s=1)
-new_cell_x = x_kaca[0::3]
-new_cell_y = x_kaca[1::3]
-new_cell_z = x_kaca[2::3]
-ax.scatter(new_cell_x, new_cell_y, new_cell_z, c='r', s=1)
-plt.show()
-
-new_cell_x = np.asarray(list(map(lambda y: int(y), new_cell_x)))
-new_cell_y = np.asarray(list(map(lambda y: int(y), new_cell_y)))
-new_cell_z = np.asarray(list(map(lambda y: int(y), new_cell_z)))
+new_cell_x = np.asarray(list(map(lambda e: int(e), new_cell_x)))
+new_cell_y = np.asarray(list(map(lambda e: int(e), new_cell_y)))
+new_cell_z = np.asarray(list(map(lambda e: int(e), new_cell_z)))
 
 idx = np.argsort(new_cell_z)
 new_cell_z = np.array(new_cell_z)[idx]
 new_cell_y = np.array(new_cell_y)[idx]
 new_cell_x = np.array(new_cell_x)[idx]
 
-print(new_cell_x)
-print(new_cell_y)
-print(new_cell_z)
+layers = np.asarray(list(chunks(new_cell, 3 * LANDMARKS_PER_LAYER)))
+print(layers)
 
-x, y, z, d = np.random.rand(4, 50)
-rbfi = Rbf(new_cell_x, new_cell_y, new_cell_z, np.ones(new_cell_z.size))  # radial basis function interpolator instance
-xi = yi = zi = np.linspace(0, 1, 20)
-di = rbfi(xi, yi, zi)   # interpolated values
-print(di.shape)
+inside = 0
+outside = 0
+on_edge = 0
+print(len(layers))
+with open('cell.raw', 'ab+') as f:
+    for z in range(len(layers)):
+        layers[z][2::3] = z
+        points = list(map(tuple, np.asarray(list(chunks(layers[z], 3)))))
+        points = np.asarray(list(map(lambda t: tuple(map(int, t)), points)))
 
-# grid = np.zeros((new_cell_x.size, new_cell_y.size, new_cell_z.size))
-# cur_z = 0
-# with open('cell.raw', 'ab+') as f:
-#     for z in range(-300, 300):
-#         if z == cur_z:
-#             for y in range(-300, 300):
-#                 for x in range(-300, 300):
-#                     appearances_z = [i for i, e in new_cell_z if e == z]
-#                     for appearance in appearances_z:
-#                         if new_cell_x[appearance] = x and new_cell_y[appearance] = y:
-#
-#                     if new_cell_z[i]:
-#
-#                     else if:
-#
-#                     else:
-#                         f.write(\x00)
-#         else:
+        points_clockwise = sorted(points, key=clockwiseangle_and_distance)
+        points_clockwise = np.asarray(points_clockwise).tolist()
+        print(points_clockwise)
+
+        poly = Polygon(points_clockwise)
+        # p = points_clockwise
+        # p.append(points_clockwise[0])  # repeat the first point to create a 'closed loop'
+        # xs, ys, zs = zip(*p)  # create lists of x and y values
+        # plt.figure()
+        # plt.plot(xs, ys, zs)
+        # plt.show()
+
+        # p = np.asarray([[item[0], item[1]] for item in points])
+        # hull = ConvexHull(p)
+        # plt.plot(p[:, 0], p[:, 1], 'o')
+        # for simplex in hull.simplices:
+        #     plt.plot(p[simplex, 0], p[simplex, 1], 'k-')
+        # plt.plot(p[hull.vertices, 0], p[hull.vertices, 1], 'r--', lw=2)
+        # plt.plot(p[hull.vertices[0], 0], p[hull.vertices[0], 1], 'ro')
+        # plt.show()
+
+        output = []
+        for y in range(-200, 200):
+            for x in range(-200, 200):
+                if any(np.equal(points_clockwise, [x, y, z]).all(1)):
+                    # print(np.equal(points, [x, y, cur_z]).all(1))
+                    # print([x, y, cur_z])
+                    on_edge += 1
+                    output.append(128)
+                elif poly.contains(Point(x, y, z)):
+                    inside += 1
+                    #plt.scatter(x, y, z, c='r')
+                    output.append(255)
+                else:
+                    outside += 1
+                    output.append(0)
+
+        print(on_edge)
+        print(inside)
+        print(outside)
+        f.write(bytearray(output))
 
 # cv2.waitKey(0)
 # cv2.destroyAllWindows()
