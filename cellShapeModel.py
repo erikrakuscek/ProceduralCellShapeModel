@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
-from scipy.spatial import ConvexHull, convex_hull_plot_2d
 
 
 def num_red_pixels(img):
@@ -22,29 +21,34 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
-def clockwiseangle_and_distance(point):
-    refvec = [0, 1]
-    origin = [0, 0]
+# razvrstimo najprej po kotu, če je enak kot pa se po oddaljenosti od sredisca
+def sort_clockwise(point):
+    refvec = [0, 1, 0]
+    origin = [0, 0, 0]
 
-    # Vector between point and the origin: v = p - o
-    vector = [point[0] - origin[0], point[1] - origin[1]]
-    # Length of vector: ||v||
-    lenvector = math.hypot(vector[0], vector[1])
-    # If length is zero there is no angle
-    if lenvector == 0:
+    vec = point - origin
+    vec_len = math.hypot(vec[0], vec[1])
+    if vec_len == 0:
         return -math.pi, 0
-    # Normalize vector: v/||v||
-    normalized = [vector[0] / lenvector, vector[1] / lenvector]
-    dotprod = normalized[0] * refvec[0] + normalized[1] * refvec[1]  # x1*x2 + y1*y2
-    diffprod = refvec[1] * normalized[0] - refvec[0] * normalized[1]  # x1*y2 - y1*x2
-    angle = math.atan2(diffprod, dotprod)
-    # Negative angles represent counter-clockwise angles so we need to subtract them
-    # from 2*pi (360 degrees)
+    normalized = vec / vec_len
+
+    angle = math.atan2(
+        normalized[0] * refvec[0] + normalized[1] * refvec[1],
+        refvec[1] * normalized[0] - refvec[0] * normalized[1]
+    )
+
+    # negativne vrednosti v pozitivne
     if angle < 0:
-        return 2 * math.pi + angle, lenvector
-    # I return first the angle because that's the primary sorting criterium
-    # but if two vectors have the same angle then the shorter distance should come first.
-    return angle, lenvector
+        return 2 * math.pi + angle, vec_len
+    return angle, vec_len
+
+
+def represents_int(s):
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
 
 
 LANDMARKS_PER_LAYER = 15
@@ -64,21 +68,29 @@ cells = [[1120, 600, 19, 53, LANDMARKS_PER_LAYER, 40000],
 # with open('cells.pickle', 'wb+') as f:
 #    pickle.dump(image[0][0][3], f)
 
-if True:
+valRemodel = "n"
+while True:
+    valRemodel = input("Recreate statistical shape model? (y/n)")
+    if valRemodel == "y" or valRemodel == "n":
+        break
 
+while True:
+    val = input("Input random seed as integer:")
+    if represents_int(val):
+        random.seed(val)
+        break
+
+if valRemodel == "y":
     with open('cells.pickle', 'rb+') as f:
         images = pickle.load(f)
 
-    # TODO: init random seed
     cells_landmarks = []
-
     for cell in cells:
         layerFrom = cell[2]
         layerTo = cell[3]
         min_red = cell[4]
         max_red = cell[5]
 
-        b = 0
         landmarks = []
         prev_image = images[0]
         prev_edge = np.zeros((LANDMARKS_PER_LAYER, 2))
@@ -95,7 +107,7 @@ if True:
                           upDiff=(255, 255, 255, 255))
 
             reds = num_red_pixels(image)
-            cv2.imwrite('newImages/' + str(i) + '.png', image)
+            #cv2.imwrite('newImages/a' + str(i) + '.png', image)
 
             edge = []
             if max_red > reds.size > min_red:
@@ -103,6 +115,7 @@ if True:
                 kernel = np.ones((5, 5), np.uint8)
                 image = cv2.dilate(image, kernel, iterations=4)
 
+                # izločimo vse sive piksle
                 bg = image[:, :, 0] == image[:, :, 1]  # B == G
                 gr = image[:, :, 1] == image[:, :, 2]  # G == R
                 image = np.bitwise_and(bg, gr, dtype=np.uint8) * 255
@@ -113,17 +126,14 @@ if True:
                 # pridobimo vse točke na robu
                 edge = np.argwhere(image == 255)
 
-                # cv2.imshow('i ' + str(i), image)
                 if edge.shape[0] < LANDMARKS_PER_LAYER:
-                    # ce je slika neuporabna vzamemo prejsnjo
+                    # ce je slika neuporabna vzamemo prejsnjo - premajhen edge
                     edge = prev_edge
                     image = prev_image
             else:
-                # ce je slika neuporabna vzamemo prejsnjo
-                b += 1
+                # ce je slika neuporabna vzamemo prejsnjo - premajhna ali prevelika slika
                 edge = prev_edge
                 image = prev_image
-                print("too big or too small ", b)
 
             # vzamemo naključnih LANDMARKS_PER_LAYER točk na robu, jih poravnamo v središče koordinatnega sistema
             # in jih dodamo v landmarks
@@ -135,23 +145,26 @@ if True:
                 cell_landmarks.append(edge[j][0] - seed[1])
                 cell_landmarks.append(z)
 
+            # landmarke razvrstimo glede na kot okoli središča celice
             cell_landmarks = np.asarray(list(chunks(cell_landmarks, 3)))
-            cell_landmarks = sorted(cell_landmarks, key=clockwiseangle_and_distance)
+            cell_landmarks = sorted(cell_landmarks, key=sort_clockwise)
             cell_landmarks = np.asarray(cell_landmarks).flatten().tolist()
 
+            # dodamo landmarke glede na velikost rezin
             for a in range(LAYER_HEIGHT):
                 landmarks += cell_landmarks
+
             prev_image = image
             prev_edge = edge
             z += LAYER_HEIGHT
 
         cells_landmarks.append(landmarks)
 
-    # TODO: izračunaj povprečno obliko celice
+    # izračunamo povprečno obliko celice
     cells_landmarks = np.asarray(cells_landmarks)
     avg = np.sum(cells_landmarks, axis=0) / cells_landmarks.shape[0]
 
-    # TODO: izračunaj eigenvalues in eigenvectors
+    # izračunamo eigenvalues in eigenvectors po enačbah iz članka https://www.dlib.si/details/URN:NBN:SI:doc-THX6IZDX
     c_matrix = np.zeros((cells_landmarks.shape[1], cells_landmarks.shape[1]))
     for x in cells_landmarks:
         c_matrix += np.outer((x - avg), (x - avg))
@@ -162,12 +175,9 @@ if True:
     eigenvalues = eigenvalues[idx]
     eigenvectors = eigenvectors[:, idx]
 
+    # spremenimo v realna števila
     eigenvalues = np.asarray(list(map(lambda y: y.real, eigenvalues)))
     eigenvectors = np.asarray(list(map(lambda y: y.real, eigenvectors)))
-
-    eigen_matrix = np.zeros((cells_landmarks.shape[1], cells_landmarks.shape[1]))
-    for i in range(cells_landmarks.shape[1]):
-        eigen_matrix[i] = eigenvectors[:, i]
 
     with open('eigenvalues.pickle', 'wb+') as f:
         pickle.dump(eigenvalues, f)
@@ -183,49 +193,42 @@ with open('eigenvectors.pickle', 'rb+') as f:
 with open('avg.pickle', 'rb+') as f:
     avg = pickle.load(f)
 
-# TODO: generate new cells WOOHOO!
-# weights = np.ones(cells_landmarks.shape[1])
-# for i in range(weights.size):
-#     weights[i] *= np.sign(eigenvalues[0]) * random.random() * 3 * math.sqrt(abs(eigenvalues[0].real))
-
-random.seed(123123)
-new_cell = avg + (random.random() * 2 * math.sqrt(abs(eigenvalues[0])) * eigenvectors[0])
+# generate new cells WOOHOO!
+new_cell = avg + (random.random() * 3 * math.sqrt(abs(eigenvalues[0])) * eigenvectors[0])
 
 # fig = plt.figure()
 # ax = Axes3D(fig)
 # ax.set_xlim(-300, 300)
 # ax.set_ylim(-300, 300)
-# ax.set_zlim(-300, 300)
+# ax.set_zlim(-100, 100)
 #
-new_cell_x = new_cell[0::3]
-new_cell_y = new_cell[1::3]
-new_cell_z = new_cell[2::3]
+# new_cell_x = new_cell[0::3]
+# new_cell_y = new_cell[1::3]
+# new_cell_z = new_cell[2::3]
 # ax.scatter(new_cell_x, new_cell_y, new_cell_z, c='r', s=1)
 # plt.show()
 
-new_cell_x = np.asarray(list(map(lambda e: int(e), new_cell_x)))
-new_cell_y = np.asarray(list(map(lambda e: int(e), new_cell_y)))
-new_cell_z = np.asarray(list(map(lambda e: int(e), new_cell_z)))
-
-idx = np.argsort(new_cell_z)
-new_cell_z = np.array(new_cell_z)[idx]
-new_cell_y = np.array(new_cell_y)[idx]
-new_cell_x = np.array(new_cell_x)[idx]
+# new_cell_x = np.asarray(list(map(lambda e: int(e), new_cell_x)))
+# new_cell_y = np.asarray(list(map(lambda e: int(e), new_cell_y)))
+# new_cell_z = np.asarray(list(map(lambda e: int(e), new_cell_z)))
+#
+# idx = np.argsort(new_cell_z)
+# new_cell_z = np.array(new_cell_z)[idx]
+# new_cell_y = np.array(new_cell_y)[idx]
+# new_cell_x = np.array(new_cell_x)[idx]
 
 layers = np.asarray(list(chunks(new_cell, 3 * LANDMARKS_PER_LAYER)))
-print(layers)
 
 inside = 0
 outside = 0
 on_edge = 0
-print(len(layers))
 with open('cell.raw', 'ab+') as f:
     for z in range(len(layers)):
         layers[z][2::3] = z
         points = list(map(tuple, np.asarray(list(chunks(layers[z], 3)))))
         points = np.asarray(list(map(lambda t: tuple(map(int, t)), points)))
 
-        points_clockwise = sorted(points, key=clockwiseangle_and_distance)
+        points_clockwise = sorted(points, key=sort_clockwise)
         points_clockwise = np.asarray(points_clockwise).tolist()
         print(points_clockwise)
 
@@ -256,16 +259,13 @@ with open('cell.raw', 'ab+') as f:
                     output.append(128)
                 elif poly.contains(Point(x, y, z)):
                     inside += 1
-                    #plt.scatter(x, y, z, c='r')
+                    # plt.scatter(x, y, z, c='r')
                     output.append(255)
                 else:
                     outside += 1
                     output.append(0)
 
-        print(on_edge)
-        print(inside)
-        print(outside)
+        print("total points on edge:", on_edge)
+        print("total points on the inside:", inside)
+        print("total points on the outside:", outside)
         f.write(bytearray(output))
-
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
